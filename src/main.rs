@@ -13,76 +13,102 @@ extern crate mysql;
 extern crate lazy_static;
 
 use dotenv::dotenv;
+use rocket::http::Status;
+use rocket::response;
+use rocket::response::status;
+use rocket::response::Responder;
+use rocket::Request;
 
 mod database;
 
 mod structs;
+use structs::NewPlugin;
 use structs::Plugin;
 
 use rocket_contrib::json::Json;
 
-// use mysql::*;
-use mysql::prelude::*;
 
 #[path = "plugins/repository.rs"]
 mod plugins_repository;
 
 lazy_static! {
-    static ref POOL: mysql::Pool = database::create_pool();
+    pub static ref POOL: mysql::Pool = database::create_pool();
+}
+
+pub fn open_connection() -> Result<mysql::PooledConn, String>
+{
+    match POOL.get_conn() 
+    {
+        Ok(cn) => Ok(cn),
+        Err(_) => Err("Error opening connection".to_string())
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct CustomError {
+    pub message: String,
+}
+
+impl CustomError {
+    fn new(message: String) -> CustomError {
+        CustomError { message: message }
+    }
+}
+
+pub enum PluginResponse<R> {
+    Ok(R),
+    Err(String),
+}
+
+impl<'r> Responder<'r> for PluginResponse<Vec<Plugin>> {
+    fn respond_to(self, req: &Request) -> response::Result<'r> {
+        match self {
+            PluginResponse::Ok(value) => status::Custom(Status::Ok, Json(value)).respond_to(req),
+            PluginResponse::Err(x) => {
+                status::Custom(Status::InternalServerError, Json(CustomError::new(x)))
+                    .respond_to(req)
+            }
+        }
+    }
 }
 
 #[get("/api/plugins")]
-fn list_plugins() -> Json<Vec<Plugin>> {
-    let mut conn = POOL.get_conn().expect("Failed to open connection");
+fn list_plugins() -> PluginResponse<Vec<Plugin>> {
+    match plugins_repository::list_plugins() {
+        Ok(values) => PluginResponse::Ok(values),
+        Err(x) => PluginResponse::Err(x)
+    }
+}
 
-    let selected_plugins = conn
-        .query_map(
-            "SELECT id, name, description, price FROM plugins",
-            |(id, name, description, price)| Plugin {
-                id,
-                name,
-                description,
-                price,
-            },
-        )
-        .expect("Failed to get plugins");
-
-    Json(selected_plugins)
+impl<'r> Responder<'r> for PluginResponse<Plugin> {
+    fn respond_to(self, req: &Request) -> response::Result<'r> {
+        match self {
+            PluginResponse::Ok(value) => status::Custom(Status::Ok, Json(value)).respond_to(req),
+            PluginResponse::Err(x) => {
+                status::Custom(Status::InternalServerError, Json(CustomError::new(x)))
+                    .respond_to(req)
+            }
+        }
+    }
 }
 
 #[post("/api/plugins", format = "application/json", data = "<plugin>")]
-fn create_plugin(plugin: Json<Plugin>) -> Json<Plugin> {
+fn create_plugin(plugin: Json<NewPlugin>) -> PluginResponse<Plugin> {
     let plugin_save = plugin.into_inner();
 
-    let mut conn = POOL.get_conn().expect("Failed to open connection");
-
-    match conn.exec_drop(
-        "INSERT INTO plugins (name, description, price) VALUES(?, ?, ?)",
-        (plugin_save.name, plugin_save.description, plugin_save.price),
-    )
-    {
-        Ok(_) => {
-            match plugins_repository::get_plugin(1, conn) {
-                Ok(saved) => Json(saved),
-                Err(err) => Json(Plugin {
-                    description: format!("ERRO GET {}", err),
-                    id: 0,
-                    name: "".to_string(),
-                    price: 0.0
-                })
-            }
+    match plugins_repository::insert_plugin(plugin_save) {
+        Ok(_) => match plugins_repository::get_last_plugin() {
+            Ok(saved) => PluginResponse::Ok(saved),
+            Err(err) => PluginResponse::Err(err),
         },
-        Err(err) => Json(Plugin {
-            description: format!("ERRO insert {}", err),
-            id: 0,
-            name: "".to_string(),
-            price: 0.0
-        })
+        Err(_) => PluginResponse::Err("Error trying to insert plugin".to_string()),
     }
-    
 }
 
 fn main() {
     dotenv().ok();
-    rocket::ignite().mount("/", routes![list_plugins, create_plugin]).launch();
+    rocket::ignite()
+        .mount("/", routes![list_plugins, create_plugin])
+        .launch();
 }
