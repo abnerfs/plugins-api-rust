@@ -27,7 +27,6 @@ use structs::Plugin;
 
 use rocket_contrib::json::Json;
 
-
 #[path = "plugins/repository.rs"]
 mod plugins_repository;
 
@@ -35,15 +34,12 @@ lazy_static! {
     pub static ref POOL: mysql::Pool = database::create_pool();
 }
 
-pub fn open_connection() -> Result<mysql::PooledConn, String>
-{
-    match POOL.get_conn() 
-    {
+pub fn open_connection() -> Result<mysql::PooledConn, String> {
+    match POOL.get_conn() {
         Ok(cn) => Ok(cn),
-        Err(_) => Err("Error opening connection".to_string())
+        Err(_) => Err("Error opening connection".to_string()),
     }
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct CustomError {
@@ -77,7 +73,7 @@ impl<'r> Responder<'r> for PluginResponse<Vec<Plugin>> {
 fn list_plugins() -> PluginResponse<Vec<Plugin>> {
     match plugins_repository::list_plugins() {
         Ok(values) => PluginResponse::Ok(values),
-        Err(x) => PluginResponse::Err(x)
+        Err(x) => PluginResponse::Err(x),
     }
 }
 
@@ -90,6 +86,28 @@ impl<'r> Responder<'r> for PluginResponse<Plugin> {
                     .respond_to(req)
             }
         }
+    }
+}
+
+#[put("/api/plugins/<id>", format = "application/json", data = "<plugin>")]
+fn update_plugin(id: i32, plugin: Json<Plugin>) -> PluginResponse<Plugin> {
+    let mut plugin_save = plugin.into_inner();
+    plugin_save.id = id;
+
+    match plugins_repository::update_plugin(plugin_save) {
+        Ok(_) => match plugins_repository::get_plugin(id) {
+            Ok(saved) => PluginResponse::Ok(saved),
+            Err(err) => PluginResponse::Err(err),
+        },
+        Err(_) => PluginResponse::Err("Error trying to insert plugin".to_string()),
+    }
+}
+
+#[delete("/api/plugins/<id>")]
+fn delete_plugin(id: i32) -> &'static str {
+    match plugins_repository::delete_plugin(id) {
+        Ok(_) => "Done",
+        Err(_) => "Error trying to insert plugin",
     }
 }
 
@@ -109,6 +127,6 @@ fn create_plugin(plugin: Json<NewPlugin>) -> PluginResponse<Plugin> {
 fn main() {
     dotenv().ok();
     rocket::ignite()
-        .mount("/", routes![list_plugins, create_plugin])
+        .mount("/", routes![list_plugins, create_plugin, update_plugin, delete_plugin])
         .launch();
 }

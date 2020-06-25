@@ -35,6 +35,32 @@ pub fn list_plugins() -> Result<Vec<Plugin>, String> {
     }
 }
 
+pub fn update_plugin(plugin_save: Plugin) -> Result<(), String> {
+    let mut conn = open_connection()?;
+
+    match conn.exec_drop(
+        "UPDATE plugins SET name = ?, description = ?, price = ? WHERE id = ?",
+        (
+            plugin_save.name,
+            plugin_save.description,
+            plugin_save.price,
+            plugin_save.id,
+        ),
+    ) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(format!("update_plugin error: {}", err)),
+    }
+}
+
+pub fn delete_plugin(id: i32) -> Result<(), String> {
+    let mut conn = open_connection()?;
+
+    match conn.exec_drop("DELETE FROM plugins WHERE id = ?", (id,)) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(format!("delete_plugin error: {}", err)),
+    }
+}
+
 pub fn insert_plugin(plugin_save: NewPlugin) -> Result<(), String> {
     let mut conn = open_connection()?;
 
